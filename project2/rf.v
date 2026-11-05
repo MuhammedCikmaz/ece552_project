@@ -37,7 +37,28 @@ module rf #(
     input  wire [ 4:0] i_rd_waddr,
     input  wire [31:0] i_rd_wdata
 );
-    // TODO: Fill in your implementation here.
+    // declaration of register arrays
+    // i am declaring 32 but since i will never use registers[0] that register will not be systhesised which will save transistor
+    reg [31:0] registers [0:31];
+    
+    genvar i;
+    generate
+        for (i = 1; i < 32; i = i + 1) begin
+            always @(posedge i_clk) begin
+                if(i_rst) begin
+                    registers[i] <= 32'd0;
+                end else if(i_rd_wen && i_rd_waddr == i) begin
+                    registers[i] <= i_rd_wdata;
+                end
+            end 
+        end
+    endgenerate
+    
+    // since these are asyncronous 
+    assign o_rs1_rdata = i_rs1_raddr != 5'd0 ? (BYPASS_EN ? (i_rs1_raddr == i_rd_waddr ? (i_rd_wen ? (i_rd_wdata): registers[i_rs1_raddr]): registers[i_rs1_raddr]): registers[i_rs1_raddr]) : 32'd0;
+    assign o_rs2_rdata = i_rs2_raddr != 5'd0 ? (BYPASS_EN ? (i_rs2_raddr == i_rd_waddr ? (i_rd_wen ? (i_rd_wdata): registers[i_rs2_raddr]): registers[i_rs2_raddr]): registers[i_rs2_raddr]) : 32'd0;
+
+    
 endmodule
 
 `default_nettype wire

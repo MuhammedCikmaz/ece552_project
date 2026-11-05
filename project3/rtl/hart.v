@@ -1,3 +1,5 @@
+`default_nettype none
+
 module hart #(
     // After reset, the program counter (PC) should be initialized to this
     // address and start executing instructions from there.
@@ -131,7 +133,122 @@ module hart #(
     ,`RVFI_OUTPUTS,
 `endif
 );
-    // Fill in your implementation here.
+    // Fetch and state. All architectural updates occur at the rising edge;
+    // the combinational path executes one instruction between clock edges.
+    reg [31:0] pc;
+    reg halted;
+    wire active = ~i_rst & ~halted;
+    wire [31:0] inst = i_imem_rdata;
+    wire [31:0] pc4 = pc + 32'd4;
+    wire [31:0] next_pc;
+    wire ebreak;
+
+    always @(posedge i_clk) begin
+        if (i_rst) begin
+            pc <= RESET_ADDR;
+            halted <= 1'b0;
+        end else begin
+            pc <= next_pc;
+            halted <= halted | ebreak;
+        end
+    end
+    assign o_imem_raddr = pc;
+
+    // Decode: the instruction format and datapath controls are independent
+    // from the state updates, which are gated below by active and trap.
+    wire [5:0] format;
+    wire use_rs1, use_rs2, alu_pc, alu_imm;
+    wire [2:0] alu_op;
+    wire alu_sub, alu_unsigned, alu_arith;
+    wire [1:0] wb_sel;
+    wire reg_write, load, store, branch, jal, jalr, illegal;
+    decode decoder (
+        .i_inst(inst), .o_format(format),
+        .o_use_rs1(use_rs1), .o_use_rs2(use_rs2),
+        .o_alu_pc(alu_pc), .o_alu_imm(alu_imm), .o_alu_op(alu_op),
+        .o_alu_sub(alu_sub), .o_alu_unsigned(alu_unsigned),
+        .o_alu_arith(alu_arith), .o_wb_sel(wb_sel),
+        .o_reg_write(reg_write), .o_load(load), .o_store(store),
+        .o_branch(branch), .o_jal(jal), .o_jalr(jalr),
+        .o_ebreak(ebreak), .o_illegal(illegal)
+    );
+    wire [31:0] immediate;
+    imm immediate_generator (
+        .i_inst(inst), .i_format(format), .o_immediate(immediate)
+    );
+    wire [4:0] rs1_addr = use_rs1 ? inst[19:15] : 5'd0;
+    wire [4:0] rs2_addr = use_rs2 ? inst[24:20] : 5'd0;
+    wire [4:0] rd_addr = inst[11:7];
+    wire [31:0] rs1_data, rs2_data, wb_data;
+    wire rd_wen;
+    rf #(.BYPASS_EN(0)) registers (
+        .i_clk(i_clk), .i_rst(i_rst),
+        .i_rs1_raddr(rs1_addr), .o_rs1_rdata(rs1_data),
+        .i_rs2_raddr(rs2_addr), .o_rs2_rdata(rs2_data),
+        .i_rd_wen(rd_wen), .i_rd_waddr(rd_addr), .i_rd_wdata(wb_data)
+    );
+
+    // Execute. Branches compare the unmodified register operands in the
+    // ALU, while a separate adder computes the PC-relative target.
+    wire [31:0] operand_a = alu_pc ? pc : rs1_data;
+    wire [31:0] operand_b = alu_imm ? immediate : rs2_data;
+    wire [31:0] alu_result;
+    wire equal, less;
+    alu execution_unit (
+        .i_opsel(alu_op), .i_sub(alu_sub), .i_unsigned(alu_unsigned),
+        .i_arith(alu_arith), .i_op1(operand_a), .i_op2(operand_b),
+        .o_result(alu_result), .o_eq(equal), .o_slt(less)
+    );
+    wire branch_condition = (inst[14:12] == 3'b000) ? equal :
+                             (inst[14:12] == 3'b001) ? ~equal :
+                             (inst[14:12] == 3'b100) ? less :
+                             (inst[14:12] == 3'b101) ? ~less :
+                             (inst[14:12] == 3'b110) ? less :
+                             (inst[14:12] == 3'b111) ? ~less : 1'b0;
+    wire redirect = jal | jalr | (branch & branch_condition);
+    wire [31:0] pc_target = pc + immediate;
+    wire [31:0] target = jalr ? {alu_result[31:1], 1'b0} : pc_target;
+    // A not-taken branch must not trap on an unused misaligned target.
+    wire bad_target = redirect & (target[1:0] != 2'b00);
+
+    // Memory adapter: address alignment is separate from access legality.
+    wire [31:0] load_data;
+    wire bad_data_alignment;
+    lsu memory_adapter (
+        .i_addr(alu_result), .i_store_data(rs2_data),
+        .i_mem_data(i_dmem_rdata), .i_funct3(inst[14:12]),
+        .o_addr(o_dmem_addr), .o_mask(o_dmem_mask),
+        .o_store_data(o_dmem_wdata), .o_load_data(load_data),
+        .o_misaligned(bad_data_alignment)
+    );
+    wire trap = illegal | bad_target | ((load | store) & bad_data_alignment) |
+                (pc[1:0] != 2'b00);
+    assign o_dmem_ren = active & load & ~trap;
+    assign o_dmem_wen = active & store & ~trap;
+
+    // Writeback and next PC. With no privileged trap-handler interface,
+    // a trapping instruction reports the trap, has no side effects, and
+    // continues at PC+4. EBREAK instead holds the PC and latches halt.
+    assign wb_data = (wb_sel == 2'b01) ? load_data :
+                     (wb_sel == 2'b10) ? pc4 :
+                     (wb_sel == 2'b11) ? immediate : alu_result;
+    assign rd_wen = active & reg_write & ~trap & (rd_addr != 5'd0);
+    assign next_pc = (halted | ebreak) ? pc :
+                     trap ? pc4 : redirect ? target : pc4;
+
+    // Observe the same instruction whose effects commit at this edge.
+    assign o_retire_valid = active;
+    assign o_retire_inst = inst;
+    assign o_retire_trap = active & trap;
+    assign o_retire_halt = active & ebreak;
+    assign o_retire_rs1_raddr = rs1_addr;
+    assign o_retire_rs2_raddr = rs2_addr;
+    assign o_retire_rs1_rdata = rs1_data;
+    assign o_retire_rs2_rdata = rs2_data;
+    assign o_retire_rd_waddr = rd_wen ? rd_addr : 5'd0;
+    assign o_retire_rd_wdata = wb_data;
+    assign o_retire_pc = pc;
+    assign o_retire_next_pc = next_pc;
 endmodule
 
 `default_nettype wire

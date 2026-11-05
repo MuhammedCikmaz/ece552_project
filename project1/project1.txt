@@ -1,0 +1,12 @@
+Author: Muhammed Cikmaz
+
+[Q0]: no, a0 could not always be the correct representaton of multiple of 2 32 bit numberes since if the inputs are large enough a0 could overflow
+[Q1]: well we know that we can do division and multiplication, since we can do those we should also be able to do modulo, exponentials etc
+[Q2]: the benefit could be that it would be way more efficient and fast then doing than how we implemented it, and the downside could be that we have a limited physical space, having an mul means 1 less other physical thing 
+[Q3]: every RV32I is exactly 32 bits while IA-32 could range from 1 bytes to 15 bytes. - IA-32 can do math directly on memory while RV32I has to load the value into a register, do the math, then store it back. - IA-32 has flag registers that are updated with (i think) every instruction for jump instructions, while RV32I has comparisons fused into the jump functions
+[Q4]: high level languages are more human readiable, portable and abstract language while low level languages are closed to what computer actually reads. in development, one would use assembly if you want to have complete control over the machine you are working on while one would use a high level language when developing apps that doesnt need that much control of the memory and need the app to be portable.
+[Q5]: Preprocessor -> Compiler -> Assembler -> Linker -> Loader. so there is kind of chain of information going thourgh each stage, and they trust each other on the information they trade between them. But detail gets lost at each handoff and later stages see more of the program and understand less of it so next steps might not be able to perform their jobs well.
+[Q6]: if a program is exnentively making use of idk "and" operation, 1 more mul means 1 less and (not really but around that) so that program will have less of what it needs which might slow down the process
+[Q7]: this program is basically counting how many times can it divide ((input * 5) - 160) and returning the count. so integer division of ((input * 5) - 160) (basically F to C)
+[Q8]: (lol i didnt realize this was F  to C until trying to understand what this question was asking). I would use the umul file i wrote to first multiply our var (variable), (instead of multiplying it by 5), and then we can do division by 5 instead of 9 in the loop and then add 32 at the end
+[Q9]: like a divier would be nice, i think that is the part where we are spending most of our time

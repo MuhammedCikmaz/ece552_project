@@ -1,0 +1,9 @@
+[Q0]: if you chose a wrong encoding as output well you get the wrong answer. R should have been 0, so in our code we just put it in the else category and if nothing is chosen we just return that.
+[Q1]: because PC should always be an even number, if it is old that is a violation. if we include imm[0] instead, since half of the address be an odd number, we would lose half of our range.
+[Q2]: They tried to keep each immediate bit in the same place in the instruction across formats, to minimize the number of muxes in the design.
+[Q3]: i skipped that in my loop because it should not write to anything. r0 is just hard wired to 0
+[Q4]: The PC isn't one of the registers instructions can name, and it's read and updated every cycle, so it gets its own dedicated register instead of taking up register file ports.
+[Q5]: we could change the array size and address width in the register file, but we would have to modify ISA as well. because currently rs1, rs2 and dr are only 5 bits which only support up to 32 registers.
+[Q6]: what i did today will be used for registers and constants in calls and alu will be used for artihmetic operations. other than those we would need anoter decoder like imm.v file and rf.v like memory controller.
+[Q7]: last project we did multiply in software by shifting and adding in a loop. in hardware we can build a multiplier that does the same shift and add all at once, then give it an encoding in the ISA so the decoder knows when to use it
+[Q8]: the ALU would need to use only the upper or lower 16 bits and extend the result, the register file would need to be able to write just half of a register, and the immediate decoder would need to support the new encodings.

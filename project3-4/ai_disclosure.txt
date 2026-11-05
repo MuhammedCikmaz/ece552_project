@@ -1,0 +1,14 @@
+ai was only used for understanding the concept as we used it to review the topic
+
+writing carry registers were taking a lot of time so i just turned on cursor tab (copilot tab) 
+just to write that part faster
+ex: 
+i wrote
+"// if_id_inst 32" (wire name and bit count)
+
+and ai wrote
+"id_ex_if_id_inst <= if_id_inst;" in the if block
+
+we determined wire names and what should be carried to the next stage but ai just helped me write it faster
+
+
