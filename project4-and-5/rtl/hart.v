@@ -145,6 +145,9 @@ module hart #(
     // declared here so every use is below the declaration
     wire redirect;
     wire hazard_detect;
+    reg id_ex_op_load;
+    wire [31:0] executeRs1Data;
+    wire [31:0] executeRs2Data;
     reg halted;
     reg id_ex_if_id_flag;
     reg [ 4:0] id_ex_rd;
@@ -279,7 +282,7 @@ module hart #(
     wire [31:0] rd_wdata;
 
     rf #(
-        .BYPASS_EN (0)
+        .BYPASS_EN (1)
     ) u_rf (
         .i_clk       (i_clk),
         .i_rst       (i_rst),
@@ -292,28 +295,11 @@ module hart #(
         .i_rd_wdata  (rd_wdata)
     );
 
-    // hazard detection unit
 
-    // EX stage
-    wire hazard_detect_ex = id_ex_if_id_flag & id_ex_uses_rd & (id_ex_rd != 5'd0) &
-                     ((uses_rs1 & (rs1_raddr == id_ex_rd)) |
-                      (uses_rs2 & (rs2_raddr == id_ex_rd)));
+    wire loadUseHazard = id_ex_if_id_flag & id_ex_op_load & (id_ex_rd != 5'd0) &
+                         ((rs1_raddr == id_ex_rd) | (rs2_raddr == id_ex_rd));
 
-    // MEM stage
-    wire hazard_detect_mem = ex_mem_id_ex_if_id_flag & ex_mem_id_ex_uses_rd &
-                      (ex_mem_id_ex_rd != 5'd0) &
-                      ((uses_rs1 & (rs1_raddr == ex_mem_id_ex_rd)) |
-                       (uses_rs2 & (rs2_raddr == ex_mem_id_ex_rd)));
-
-    // WB stage
-    wire hazard_detect_wb = mem_wb_ex_mem_id_ex_if_id_flag & mem_wb_ex_mem_id_ex_uses_rd &
-                     (mem_wb_ex_mem_id_ex_rd != 5'd0) &
-                     ((uses_rs1 & (rs1_raddr == mem_wb_ex_mem_id_ex_rd)) |
-                      (uses_rs2 & (rs2_raddr == mem_wb_ex_mem_id_ex_rd)));
-
-    // detect the hazard
-    // this means we should stall the pipeline
-    assign hazard_detect = if_id_flag & (hazard_detect_ex | hazard_detect_mem | hazard_detect_wb);
+    assign hazard_detect = if_id_flag & loadUseHazard;
 
 
     // ID/EX registers
@@ -348,8 +334,6 @@ module hart #(
     reg id_ex_op_jal;
     // op_jalr 1
     reg id_ex_op_jalr;
-    // op_load 1
-    reg id_ex_op_load;
     // op_store 1
     reg id_ex_op_store;
     // op_lui 1
@@ -402,10 +386,8 @@ module hart #(
     wire       alu_arith = alu_funct & id_ex_if_id_inst[30];
     wire       alu_unsigned = id_ex_op_branch ? id_ex_funct3[1] : (id_ex_funct3 == 3'b011);
 
-    // select operands from the saved PC, register values, and immediate
-    // keep the original rs2 value available separately for stores
-    wire [31:0] alu_op1 = id_ex_op_auipc ? id_ex_if_id_pc : id_ex_rs1_rdata;
-    wire [31:0] alu_op2 = (id_ex_op_reg | id_ex_op_branch) ? id_ex_rs2_rdata : id_ex_immediate;
+    wire [31:0] alu_op1 = id_ex_op_auipc ? id_ex_if_id_pc : executeRs1Data;
+    wire [31:0] alu_op2 = (id_ex_op_reg | id_ex_op_branch) ? executeRs2Data : id_ex_immediate;
 
 
     // ALU also provides equality and less than comparisons for branches
@@ -507,7 +489,7 @@ module hart #(
             ex_mem_id_ex_if_id_flag <= id_ex_if_id_flag;
 
             ex_mem_alu_result <= alu_result;
-            ex_mem_id_ex_rs2_rdata <= id_ex_rs2_rdata;
+            ex_mem_id_ex_rs2_rdata <= executeRs2Data;
             ex_mem_id_ex_immediate <= id_ex_immediate;
             ex_mem_id_ex_funct3 <= id_ex_funct3;
             ex_mem_id_ex_op_load <= id_ex_op_load;
@@ -523,7 +505,7 @@ module hart #(
             ex_mem_id_ex_if_id_pc <= id_ex_if_id_pc;
 
             ex_mem_id_ex_if_id_inst <= id_ex_if_id_inst;
-            ex_mem_id_ex_rs1_rdata <= id_ex_rs1_rdata;
+            ex_mem_id_ex_rs1_rdata <= executeRs1Data;
             ex_mem_id_ex_rs1_raddr <= id_ex_rs1_raddr;
             ex_mem_id_ex_rs2_raddr <= id_ex_rs2_raddr;
 
@@ -545,6 +527,19 @@ module hart #(
                                         (size_word & (byte_off != 2'b00)));
 
     wire trap = ex_mem_id_ex_illegal | ex_mem_inst_misaligned | mem_misaligned;
+
+    wire memoryWritesRegister = ex_mem_id_ex_if_id_flag & ex_mem_id_ex_uses_rd & (ex_mem_id_ex_rd != 5'd0) & ~trap;
+    wire [31:0] memoryForwardData = ex_mem_id_ex_op_lui ? ex_mem_id_ex_immediate :
+                                    (ex_mem_id_ex_op_jal | ex_mem_id_ex_op_jalr) ? (ex_mem_id_ex_if_id_pc + 32'd4) :
+                                                                                    ex_mem_alu_result;
+
+    wire forwardRs1FromMemory = memoryWritesRegister & (ex_mem_id_ex_rd == id_ex_rs1_raddr);
+    wire forwardRs2FromMemory = memoryWritesRegister & (ex_mem_id_ex_rd == id_ex_rs2_raddr);
+    wire forwardRs1FromWriteback = (rd_waddr != 5'd0) & (rd_waddr == id_ex_rs1_raddr);
+    wire forwardRs2FromWriteback = (rd_waddr != 5'd0) & (rd_waddr == id_ex_rs2_raddr);
+
+    assign executeRs1Data = forwardRs1FromMemory ? memoryForwardData : forwardRs1FromWriteback ? rd_wdata : id_ex_rs1_rdata;
+    assign executeRs2Data = forwardRs2FromMemory ? memoryForwardData :forwardRs2FromWriteback ? rd_wdata : id_ex_rs2_rdata;
 
     wire [3:0] mask_byte = (byte_off == 2'b00) ? 4'b0001 :
                            (byte_off == 2'b01) ? 4'b0010 :
